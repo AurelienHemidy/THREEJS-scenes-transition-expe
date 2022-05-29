@@ -4,33 +4,16 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import gsap from 'gsap';
 import * as dat from 'lil-gui';
 import { Mesh, Plane, PlaneBufferGeometry, PlaneGeometry, ShaderMaterial } from 'three';
-import TransitionScene from './sceneTransition';
 
 /**
  * Base
  */
-
 const parameters = {
   color: 0xff0000,
   spin: () => {
     gsap.to(mesh.rotation, 1, { y: mesh.rotation.y + Math.PI * 2 });
   },
-  changeScene: () => {
-    transitionScene.setTransition(renderTarget2);
-    // gsap.to(
-    //   {},
-    //   {
-    //     onUpdate() {
-    //       console.log(this.ratio);
-    //       transitionScene.quadMat.uniforms.uLerp.value = this.ratio;
-    //     },
-    //     duration: 2,
-    //     onComplete() {
-    //       console.log('transition complète');
-    //     },
-    //   }
-    // );
-  },
+  changeScene: () => {},
   transitionValue: 0,
 };
 
@@ -38,6 +21,7 @@ const parameters = {
 const canvas = document.querySelector('canvas.webgl');
 
 // Scene
+const scene = new THREE.Scene();
 
 const scene2 = new THREE.Scene();
 
@@ -50,16 +34,15 @@ scene3.background = new THREE.Color(0x00ffff);
 /**
  * Object
  */
+const geometry = new THREE.BoxGeometry(1, 1, 1);
+const material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+const mesh = new THREE.Mesh(geometry, material);
+scene3.add(mesh);
 
 const geometry2 = new THREE.BoxGeometry(1, 1, 1);
 const material2 = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
 const mesh2 = new THREE.Mesh(geometry2, material2);
 scene2.add(mesh2);
-
-const geometry = new THREE.BoxGeometry(1, 1, 1);
-const material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
-const mesh = new THREE.Mesh(geometry, material);
-scene3.add(mesh);
 
 /**
  * Sizes
@@ -74,23 +57,27 @@ const sizes = {
 const renderTarget = new THREE.WebGLRenderTarget(sizes.width, sizes.height);
 const renderTarget2 = new THREE.WebGLRenderTarget(sizes.width, sizes.height);
 
-const transitionScene = new TransitionScene(renderTarget);
-
-export const transition = (ratio) => (transitionScene.quadMat.uniforms.uLerp.value = ratio);
-
 window.addEventListener('resize', () => {
   // Update sizes
   sizes.width = window.innerWidth;
   sizes.height = window.innerHeight;
 
   // Update camera
-  transitionScene.camera.aspect = sizes.width / sizes.height;
-  transitionScene.camera.updateProjectionMatrix();
+  camera.aspect = sizes.width / sizes.height;
+  camera.updateProjectionMatrix();
 
   // Update renderer
   renderer.setSize(sizes.width, sizes.height);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 });
+
+/**
+ * Camera
+ */
+// Base camera
+const camera = new THREE.PerspectiveCamera(75, sizes.width / sizes.height, 0.1, 100);
+camera.position.z = 3;
+scene.add(camera);
 
 const camera2 = new THREE.PerspectiveCamera(75, sizes.width / sizes.height, 0.1, 100);
 camera2.position.z = 3;
@@ -99,8 +86,63 @@ const camera3 = new THREE.PerspectiveCamera(75, sizes.width / sizes.height, 0.1,
 camera3.position.z = 3;
 scene3.add(camera3);
 
+const transitionTexture = new THREE.TextureLoader().load('/transition1.png');
+
+const quadGeom = new PlaneGeometry(2, 2);
+const quadMat = new ShaderMaterial({
+  fragmentShader: `
+  uniform sampler2D uScene1Texture;
+  uniform sampler2D uScene2Texture;
+  uniform sampler2D uTransitionTexture;
+  varying vec2 vUv;
+  uniform vec2 uResolution;
+  uniform float uLerp;
+  void main() {
+    //vec2 screenUv = (gl_FragCoord.xy / uResolution);
+    
+    float threshold = 0.3;
+    vec4 transitionTexel = texture2D( uTransitionTexture, vUv );
+    float r = uLerp * (1.0 + threshold * 2.0) - threshold;
+    float mixf = clamp((transitionTexel.r - r)*(1.0/threshold), 0.0, 1.0);
+
+    //gl_FragColor = vec4( mix( texture2D(uScene1Texture, vUv).xyz, texture2D(uScene2Texture, vUv).xyz, uLerp ), 1. );
+    gl_FragColor = mix( texture2D(uScene1Texture, vUv), texture2D(uScene2Texture, vUv), mixf );
+    //gl_FragColor = texture2D(uTransitionTexture, vUv);
+  }
+  `,
+  vertexShader: `
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = vec4(position, 1.0);
+    
+  }`,
+  uniforms: {
+    uScene1Texture: {
+      value: renderTarget.texture,
+    },
+    uScene2Texture: {
+      value: null,
+    },
+    uLerp: {
+      value: 0.0,
+    },
+    uResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+    uTransitionTexture: {
+      value: transitionTexture,
+    },
+  },
+  transparent: true,
+  depthTest: false,
+});
+
+const plane = new Mesh(quadGeom, quadMat);
+
+plane.renderOrder = 1;
+scene.add(plane);
+
 // Controls
-const controls = new OrbitControls(transitionScene.camera, canvas);
+const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
 
 /**
@@ -144,7 +186,7 @@ gui
   .step(0.01)
   .name('transition value')
   .onChange((value) => {
-    transitionScene.quadMat.uniforms.uLerp.value = value;
+    quadMat.uniforms.uLerp.value = value;
   });
 
 /**
@@ -171,7 +213,7 @@ const tick = () => {
   renderer.setRenderTarget(null);
 
   // Render
-  renderer.render(transitionScene.scene, transitionScene.camera);
+  renderer.render(scene, camera);
 
   // Call tick again on the next frame
   window.requestAnimationFrame(tick);
